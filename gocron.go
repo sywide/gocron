@@ -1,16 +1,18 @@
-// goCron : A Golang Job Scheduling Package.
+// Package gocron : A Golang Job Scheduling Package.
 //
 // An in-process scheduler for periodic jobs that uses the builder pattern
 // for configuration. Schedule lets you run Golang functions periodically
 // at pre-determined intervals using a simple, human-friendly syntax.
 //
 // Inspired by the Ruby module clockwork <https://github.com/tomykaira/clockwork>
-// and
-// Python package schedule <https://github.com/dbader/schedule>
+// and Python package schedule <https://github.com/dbader/schedule>
 //
 // See also
 // http://adam.heroku.com/past/2010/4/13/rethinking_cron/
 // http://adam.heroku.com/past/2010/6/30/replace_cron_with_clockwork/
+//
+// Fork by sywide sylvain.braine@eyxance.com
+// Add Funcs to use external function reference
 //
 // Copyright 2014 Jason Lyu. jasonlvhit@gmail.com .
 // All rights reserved.
@@ -20,6 +22,7 @@ package gocron
 
 import (
 	"errors"
+	"log"
 	"reflect"
 	"runtime"
 	"sort"
@@ -28,8 +31,12 @@ import (
 	"time"
 )
 
-// Time location, default set by the time.Local (*time.Location)
-var loc = time.Local
+var (
+	// Time location, default set by the time.Local (*time.Location)
+	loc = time.Local
+	// ErrParamsNotAdapted is used when mistake on number of params
+	ErrParamsNotAdapted = errors.New("the number of params is not adapted")
+)
 
 // Change the time location
 func ChangeLoc(newLocation *time.Location) {
@@ -63,15 +70,55 @@ type Job struct {
 
 	// Map for the function task store
 	funcs map[string]interface{}
+	//funcs Funcs
 
 	// Map for function and  params of function
 	fparams map[string]([]interface{})
 }
 
-// Create a new job with the time interval.
-func NewJob(intervel uint64) *Job {
+// Funcs represent functions list
+type Funcs struct {
+	List map[string]reflect.Value
+}
+
+// NewFuncs initialize map
+func NewFuncs() *Funcs {
+	return &Funcs{
+		make(map[string]reflect.Value),
+	}
+}
+
+// Bind each function
+func (f *Funcs) Bind(name string, fn interface{}) (err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			err = errors.New(name + " is not callable")
+		}
+	}()
+	v := reflect.ValueOf(fn)
+	v.Type().NumIn()
+	f.List[name] = v
+	return
+}
+
+// FuncBindAll register all functions
+func FuncBindAll(fns map[string]interface{}) *Funcs {
+
+	f := NewFuncs()
+
+	for k, v := range fns {
+		err := f.Bind(k, v)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	return f
+}
+
+// NewJob create a new job with the time interval.
+func NewJob(interval uint64) *Job {
 	return &Job{
-		intervel,
+		interval,
 		"", "", "",
 		time.Unix(0, 0),
 		time.Unix(0, 0), 0,
@@ -109,16 +156,19 @@ func getFunctionName(fn interface{}) string {
 	return runtime.FuncForPC(reflect.ValueOf((fn)).Pointer()).Name()
 }
 
-// Specifies the jobFunc that should be called every time the job runs
-//
-func (j *Job) Do(jobFun interface{}, params ...interface{}) {
-	typ := reflect.TypeOf(jobFun)
+// Do specifies the jobFunc that should be called every time the job runs
+// Integrate Funcs specifity to use external plugins
+func (j *Job) Do(jobFun reflect.Value, params ...interface{}) {
+	typ := reflect.TypeOf(jobFun.Interface())
 	if typ.Kind() != reflect.Func {
 		panic("only function can be schedule into the job queue.")
 	}
+	if len(params) != jobFun.Type().NumIn() {
+		log.Fatalln(ErrParamsNotAdapted)
+	}
 
-	fname := getFunctionName(jobFun)
-	j.funcs[fname] = jobFun
+	fname := runtime.FuncForPC(jobFun.Pointer()).Name()
+	j.funcs[fname] = jobFun.Interface()
 	j.fparams[fname] = params
 	j.jobFunc = fname
 	//schedule the next run

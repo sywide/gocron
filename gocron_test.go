@@ -6,8 +6,6 @@ import (
 	"time"
 )
 
-var err = 1
-
 func task() {
 	fmt.Println("I am a running job.")
 }
@@ -16,21 +14,33 @@ func taskWithParams(a int, b string) {
 	fmt.Println(a, b)
 }
 
+var (
+	err       = 1
+	functions = map[string]interface{}{
+		"task":           task,
+		"taskWithParams": taskWithParams,
+	}
+)
+
 func TestSecond(*testing.T) {
-	defaultScheduler.Every(1).Second().Do(task)
-	defaultScheduler.Every(1).Second().Do(taskWithParams, 1, "hello")
+
+	funcs := FuncBindAll(functions)
+
+	defaultScheduler.Every(1).Second().Do(funcs.List["task"])
+	defaultScheduler.Every(1).Second().Do(funcs.List["taskWithParams"], 1, "hello")
 	defaultScheduler.Start()
 	time.Sleep(10 * time.Second)
 }
 
 // This is a basic test for the issue described here: https://github.com/jasonlvhit/gocron/issues/23
 func TestScheduler_Weekdays(t *testing.T) {
+	funcs := FuncBindAll(functions)
 	scheduler := NewScheduler()
 
 	job1 := scheduler.Every(1).Monday().At("23:59")
 	job2 := scheduler.Every(1).Wednesday().At("23:59")
-	job1.Do(task)
-	job2.Do(task)
+	job1.Do(funcs.List["task"])
+	job2.Do(funcs.List["task"])
 	t.Logf("job1 scheduled for %s", job1.NextScheduledTime())
 	t.Logf("job2 scheduled for %s", job2.NextScheduledTime())
 	if job1.NextScheduledTime() == job2.NextScheduledTime() {
@@ -42,13 +52,14 @@ func TestScheduler_Weekdays(t *testing.T) {
 // This ensures that if you schedule a job for today's weekday, but the time is already passed, it will be scheduled for
 // next week at the requested time.
 func TestScheduler_WeekdaysTodayAfter(t *testing.T) {
+	funcs := FuncBindAll(functions)
 	scheduler := NewScheduler()
 
 	now := time.Now()
 	timeToSchedule := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute()-1, 0, 0, time.Local)
 
 	job := callTodaysWeekday(scheduler.Every(1)).At(fmt.Sprintf("%02d:%02d", timeToSchedule.Hour(), timeToSchedule.Minute()))
-	job.Do(task)
+	job.Do(funcs.List["task"])
 	t.Logf("job is scheduled for %s", job.NextScheduledTime())
 	if job.NextScheduledTime().Weekday() != timeToSchedule.Weekday() {
 		t.Fail()
@@ -64,13 +75,14 @@ func TestScheduler_WeekdaysTodayAfter(t *testing.T) {
 // This is to ensure that if you schedule a job for today's weekday, and the time hasn't yet passed, the next run time
 // will be scheduled for today.
 func TestScheduler_WeekdaysTodayBefore(t *testing.T) {
+	funcs := FuncBindAll(functions)
 	scheduler := NewScheduler()
 
 	now := time.Now()
 	timeToSchedule := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute()+1, 0, 0, time.Local)
 
 	job := callTodaysWeekday(scheduler.Every(1)).At(fmt.Sprintf("%02d:%02d", timeToSchedule.Hour(), timeToSchedule.Minute()))
-	job.Do(task)
+	job.Do(funcs.List["task"])
 	t.Logf("job is scheduled for %s", job.NextScheduledTime())
 	if !job.NextScheduledTime().Equal(timeToSchedule) {
 		t.Fail()
@@ -149,13 +161,20 @@ func Test_formatTime(t *testing.T) {
 // utility function for testing the weekday functions *on* the current weekday.
 func callTodaysWeekday(job *Job) *Job {
 	switch time.Now().Weekday() {
-	case 0: job.Sunday()
-	case 1: job.Monday()
-	case 2: job.Tuesday()
-	case 3: job.Wednesday()
-	case 4: job.Thursday()
-	case 5: job.Friday()
-	case 6: job.Saturday()
+	case 0:
+		job.Sunday()
+	case 1:
+		job.Monday()
+	case 2:
+		job.Tuesday()
+	case 3:
+		job.Wednesday()
+	case 4:
+		job.Thursday()
+	case 5:
+		job.Friday()
+	case 6:
+		job.Saturday()
 	}
 	return job
 }
